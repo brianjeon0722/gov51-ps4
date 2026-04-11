@@ -1,0 +1,17 @@
+---
+title: "GOV51 Problem Set 4"
+author: "Brian Jeon"
+date: "04/17/2026"
+format: pdf
+header-includes:
+  - \usepackage{changepage}
+  - \usepackage{lmodern}
+  - \usepackage{anyfontsize}
+  - \fontsize{20pt}{20pt}\selectfont
+---
+
+# 1 Setup and Data Exploration
+
+Github link \href{https://github.com/brianjeon0722/gov51-ps3}{here}.
+
+## 1.1 Load packages and data
