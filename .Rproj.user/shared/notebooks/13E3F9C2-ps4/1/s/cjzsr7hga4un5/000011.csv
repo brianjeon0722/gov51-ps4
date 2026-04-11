@@ -1,0 +1,5 @@
+"0",""
+"0","modelsummary(list(""OLS"" = ols, ""2SLS"" = iv), "
+"0","             coef_map = c(""educ"" = ""Years of Education"","
+"0","                          ""Num.Obs."" = ""n""),"
+"0","             gof_map = c(""nobs"", ""r.squared""))"

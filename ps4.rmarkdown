@@ -10,11 +10,15 @@ header-includes:
   - \fontsize{20pt}{20pt}\selectfont
 ---
 
+
+
 # 1 Setup and Data Exploration
 
 Github link \href{https://github.com/brianjeon0722/gov51-ps4}{here}.
 
 ## 1.1 Load packages and data
+
+
 
 ```{r, echo = F}
 
@@ -39,6 +43,8 @@ card <- read_csv("data/card1995.csv")
 
 ```
 
+
+
 ## 1.2 Describe the data
 
 3,010 observations. Each observation is an \textbf{individual}.
@@ -46,6 +52,8 @@ card <- read_csv("data/card1995.csv")
 ## 1.3 Distribution of years of education
 
 $\bar{educ}$ = 13.26 years. Distribution is left skewed with a large spike at 12 (finishing high school) and 16 (finishing college). This makes sense because most people elect to finish their degrees rather than dropout. 
+
+
 
 ```{r}
 
@@ -64,9 +72,13 @@ card %>%
 
 ```
 
+
+
 ## 1.4 The naive relationship
 
 Yes, based on the positive slope on the OLS regression, this plot suggests more education is associated with higher wages. 
+
+
 
 ```{r}
 
@@ -80,6 +92,8 @@ card %>%
 
 ```
 
+
+
 ## 1.5 Why OLS might be misleading.
 
 Omitted Variable Bias: (1) it's possible that those who choose more years of education have some personality characteristic such as being more hardworking, intelligent, curious, etc. which is the actual cause of higher wages. (2) it's possible that those with more education years tend to come from wealthier families or have special backgrounds / connections that allow them to obtain higher wages. 
@@ -92,11 +106,15 @@ Omitted Variable Bias: (1) it's possible that those who choose more years of edu
 
 68.21\% of respondents grew up near a 4-year college at age 14. 
 
+
+
 ```{r}
 
 mean(card$nearc4)
 
 ```
+
+
 
 ## 2.2 Relevance: does proximity affect education?
 
@@ -109,6 +127,8 @@ $nearc4$ estimates:
 
 Holding race, living in metropolitan areas, living in the south, experience, and marriage constant, on average, those living near a 4-year college at age 14 have 0.32711 more education years than those who did not live near a 4-year college at age 14. This sign makes sense because living closer to a college gives you lower tuition (since your taxes go toward funding it) and lower moving / switching costs due to proximity, making it easier to attend college and thus increase your education years. 
 
+
+
 ```{r}
 
 first_stage <- lm_robust(educ ~ nearc4 + black + smsa + south + exper + expersq 
@@ -118,15 +138,21 @@ summary(first_stage)
 
 ```
 
+
+
 ## 2.3 Checking instrument strength
 
 $F = 16.49 > 10$. The instrument is strong. Instrument strength matters because IV is biased in finite samples but consistent as $n \rightarrow \infty$. As a result, because IV tries to isolate the variation in endogenous variable $X_i$ that is random, if the instrument is weak, there is too little random variation for the 2SLS and this high variance leas to unreliable inferences. In other words, because Z (instrument) is used to predict X, then $\hat{X}$ is used to predict Y, if Z cannot predict X well, $\hat{X}$ is a poor estimate of true random variation in X and might still be endogenous. 
+
+
 
 ```{r}
 
 4.0607^2
 
 ```
+
+
 
 ## 2.4 Exclusion restriction
 
@@ -137,6 +163,8 @@ b. Colleges often attract firms to the city to capitalize off the greater skille
 ## 2.5 Balance check
 
 The groups are not balanced (see table below). These differences are statistically significant at the $\alpha = 0.05$ level (p-values for each is 0...) (see regression tables below). This imbalanace tells us that the instrument may be weak and cannot isolate the as-if random variation in education years. 
+
+
 
 ```{r}
 
@@ -158,6 +186,8 @@ summary(lm(south ~ nearc4, data = card))
 
 ```
 
+
+
 \newpage
 
 # 3 The Wald Estimator
@@ -166,12 +196,16 @@ summary(lm(south ~ nearc4, data = card))
 
 $\hat{\pi}_1 = 0.0408540$. Holding race, living in metropolitan areas, living in the south, experience, and marriage constant, on average, those living near a 4-year college at age 14 have 0.0408540 greater log wages than those who did not live near a 4-year college at age 14 ($\approx$ 4.09\% greater wages). This tells us that greater proximity to a college has an associated increase in wages. 
 
+
+
 ```{r}
 
 summary(lm(lwage ~ nearc4 + black + smsa + south + exper + expersq 
                          + married, data = card))
 
 ```
+
+
 
 ## 3.2 Calculate the Wald estimator by hand
 
@@ -189,6 +223,8 @@ Holding race, living in metropolitan areas, living in the south, experience, and
 
 $\hat{\beta}_1 = 0.071498$. Holding race, living in metropolitan areas, living in the south, experience, and marriage constant, on average, the model predicts a 0.071498 increase in log wages for every 1 year increase in education years ($\approx$ 7.1498\% increase in wages for every 1 year increase in education years)
 
+
+
 ```{r}
 
 ols <- lm_robust(lwage ~ educ + black + smsa + south + exper + expersq + married,
@@ -198,9 +234,13 @@ summary(ols)
 
 ```
 
+
+
 ## 4.2 2SLS estimate
 
 $educ$ coefficient = 0.124893. Yes, this matches the Wald estimate from \textbf{Section 3.2}. 
+
+
 
 ```{r}
 
@@ -212,7 +252,11 @@ summary(iv)
 
 ```
 
+
+
 ## 4.3 Side-by-Side comparison
+
+
 
 ```{r}
 
@@ -221,6 +265,8 @@ modelsummary(list("OLS" = ols, "2SLS" = iv),
              gof_map = c("nobs", "r.squared"))
 
 ```
+
+
 
 ## 4.4. Why do OLS and 2SLS differ?
 
@@ -232,6 +278,8 @@ c. For the causal effect, IV is more credible if our 3 assumptions hold (relevan
 
 a. $educ$ coefficient = 0.071498 $\rightarrow$ 0.0675687. Including IQ decreased the coefficient. 
 
+
+
 ```{r}
 
 summary(lm(lwage ~ educ + black + smsa + south + exper + expersq 
@@ -239,7 +287,11 @@ summary(lm(lwage ~ educ + black + smsa + south + exper + expersq
 
 ```
 
+
+
 b. $educ$ coefficient = 0.124893 $\rightarrow$ 0.1093899. The coefficient decreases by 12.41\%. 
+
+
 
 ```{r}
 
@@ -251,6 +303,8 @@ summary(iv_robust(lwage ~ educ + black + smsa + south + exper + expersq
                 data = card, se_type = "HC2"))
 
 ```
+
+
 
 c. Although both coefficients decline, implying that original OLS was not capturing the OVB of IQ (higher edu positively correlated with IQ and higher IQ posiively correlated with greater wages), the end estimate between OLS and IV are still different to each other (difference of 0.0418212). As a result, IQ does not explain the source of disrepancy between OLS and IV (likely measurement error and LATE vs. everyone). 
 
@@ -267,3 +321,4 @@ Holding race, living in metropolitan areas, living in the south, experience, and
 ## 5.3 External validity
 
 No, this is likely not the same as the ATE. Those who are sensitive to distance or costs are likely very different from those who are not. Those who do not care about distance or transportation costs may have higher SES or have certain personalities that predispose them to higher wages meaning the marginal effect of education on higher wages may be limited (they could've gotten a good wage without the extra education). On the other hand, because compliers who are sensitive may already start with lower wages or have greater financial burden, the marginal effect of education on wages is likely higher compared to the typical person. 
+

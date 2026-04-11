@@ -1,0 +1,326 @@
+---
+output:
+  pdf_document: default
+header-includes:
+  - \usepackage{changepage}
+  - \usepackage{lmodern}
+  - \usepackage{anyfontsize}
+  - \fontsize{20pt}{20pt}\selectfont
+---
+
+```{r}
+
+library(dplyr)
+library(tidyverse)
+library(vroom)
+library(kableExtra)
+library(ggplot2)
+library(haven)
+library(infer)
+library(moderndive)
+library(estimatr)
+library(sandwich)
+library(lmtest)
+library(car)
+library(ivreg)
+library(plm)
+library(urca)
+library(ipumsr)
+library(tidycensus)
+library(causaldata)
+library(fredr)
+
+rm(list=ls())
+
+```
+
+# Importing Data from Tidycensus
+
+```{r}
+
+# this searches for potential variables to include
+
+vars <- load_variables(2010, "acs1", cache = TRUE)
+                       
+vars %>% filter(grepl("citizen", label, ignore.case = TRUE)) %>% 
+  select(name, label, concept) %>% 
+  print(n = 50)
+
+vars %>% filter(grepl("B05001", name)) %>% 
+  select(name, label, concept)
+
+```
+
+
+```{r}
+
+# skipping 2020 in the data
+
+years <- c(2010:2019, 2021:2024)
+
+# use census API to import state x year panel data
+
+acs <- map_dfr(years, function(yr) {
+  get_acs(
+    geography = "state",
+    variables = c(
+      gini  = "B19083_001", # gini coefficient
+      y_pc  = "B19301_001", # income per capita
+      total_cit = "B05001_001", # citizens + non citizens
+      not_citizen = "B05001_006" # non citizens
+    ),
+    year = yr,
+    survey = "acs1" # all 1 year census surveys
+  ) %>% mutate(year = yr)
+}) %>%
+  pivot_wider(
+    names_from = variable,
+    values_from = c(estimate, moe)
+  ) %>%
+  filter(NAME != "Puerto Rico") %>% # exclude puero rico
+  mutate(
+    state = state.abb[match(NAME, state.name)],
+    state = case_when(
+      NAME == "District of Columbia" ~ "DC", # state.abb doesn't do DC
+      TRUE ~ state
+    )
+  )
+
+```
+
+```{r}
+
+acs <- acs %>%
+  mutate(share_not_citizen = estimate_not_citizen / estimate_total_cit)
+
+# compute share of non-citizens (non citizens / non citizens + citizens)
+
+write.csv(acs, "clean data/acs.csv", row.names = FALSE)
+
+# export to clean data
+
+```
+
+\newpage
+
+# Importing Data from FRED
+
+```{r}
+
+# commented out because the API is bugging for too many requests since I keep
+# knitting the file
+
+# # API key
+# 
+# fredr_set_key("d40eacb8295edf17735db5c9f8c67a49")
+# 
+# api_key <- fredr_get_key()
+# 
+# # pull unemployment data for each state including DC
+# 
+# state_series <- paste0(state.abb, "UR")
+# state_series <- c(state_series, "DCUR")
+# 
+# unemployment <- map_dfr(state_series, function(series) {
+#   Sys.sleep(0.2)  # slow down requests
+#   fredr(
+#     series_id = series,
+#     observation_start = as.Date("2010-01-01"),
+#     observation_end   = as.Date("2024-12-31"),
+#     frequency         = "a",
+#     aggregation_method = "avg"
+#   ) %>%
+#     mutate(state = sub("UR$", "", series))
+# })
+# 
+# unemployment <- unemployment %>%
+#   mutate(year = as.integer(format(date, "%Y"))) %>%
+#   select(state, year, unemployment = value)
+# 
+# write.csv(unemployment, "clean data/unemployment.csv", row.names = FALSE)
+
+```
+
+# Importing Google Trends Data
+
+```{r}
+
+# function to import all us_[year]_raw.sv data
+
+cross_sectional_files <- list.files("raw data/Google Trends/us_cross_sectional/", 
+                                    pattern = "\\.csv$", full.names = TRUE)
+
+start_year <- 2010
+
+for (i in seq_along(cross_sectional_files)) {
+  f_cs <- cross_sectional_files[i]
+  name_cs <- tools::file_path_sans_ext(basename(f_cs))
+  
+  df <- read.csv(f_cs, header = FALSE)
+  
+  # remove first two rows (empty rows)
+  df <- df[-c(1, 2), ]
+  
+  # rename columns
+  colnames(df)[1:2] <- c("state", "relative_score")
+  
+  df$relative_score <- as.numeric(gsub("[^0-9.]", "", df$relative_score))
+  
+  # change appreviations
+  df$state <- trimws(df$state)
+  df$state[df$state == "District of Columbia"] <- "DC"
+  matched <- match(df$state, state.name)
+  df$state[!is.na(matched)] <- state.abb[matched[!is.na(matched)]]
+  
+  # add year column
+  df$year <- start_year + i - 1
+  
+  # add prop column - this is what % of the total searches was by the state
+  # because the current out of 100 numbers are scaled magnitudes, we care
+  # more about what % each state is
+  # ex: assume only 2 states: CA is 100 and Texas is 50 
+  # then we know CA must be 2/3 of the total US searches and Texas is 1/3 
+  # of all US searches.
+  
+  df$prop <- df$relative_score / sum(df$relative_score, na.rm = TRUE)
+  
+  assign(name_cs, df)
+}
+
+rm(df)
+
+```
+
+
+```{r}
+
+# Importing Time Series Data, commented out because not needed right now
+
+# time_series_files <- list.files("raw data/Google Trends/time_series/", 
+#                                 pattern = "\\.csv$", full.names = TRUE)
+# 
+# for (i in seq_along(time_series_files)) {
+#   f_ts <- time_series_files[i]
+#   name_ts <- tools::file_path_sans_ext(basename(f_ts))
+#   
+#   df <- read.csv(f_ts, header = FALSE)
+#   
+#   # Remove first two rows
+#   df <- df[-c(1, 2), ]
+#   
+#   # Rename columns
+#   colnames(df)[1:2] <- c("month", "relative_score")
+#   
+#   state_code <- toupper(substr(name_ts, 1, 2))
+#   
+#   df$state <- state_code
+#   
+#   df$year <- as.integer(substr(df$month, 1, 4))
+#   
+#   assign(name_ts, df)
+# }
+# 
+# rm(df)
+
+```
+
+
+```{r}
+
+# convert all us_[year]_raw --> us_[year] and put into clean data file
+
+objs <- ls(pattern = "_raw$")
+
+for (obj in objs) {
+  
+  df <- get(obj)  
+
+  # remove _raw from object name
+  clean_name <- gsub("_raw$", "", obj)
+  
+  write.csv(df, file.path("clean data", paste0(clean_name, ".csv")), row.names = FALSE)
+}
+
+```
+
+```{r}
+
+annual <- read.csv("raw data/annual.pop.csv")
+
+annual <- annual %>%
+  rename(year = observation_date) %>%
+  mutate(year = as.numeric(format(as.Date(year), "%Y"))) %>%
+  rename_with(~ gsub("POP$", "", .x)) %>%
+  mutate(across(-1, ~ .x / 1000))
+
+write.csv(annual, "clean data/annual.csv", row.names = FALSE)
+
+```
+
+\newpage
+
+# Importing CCES Data
+
+```{r}
+
+# cces data for every single year
+
+cces_data <- read_dta("raw data/cces_cumulative.dta")
+
+```
+
+
+
+```{r}
+
+library(survey)
+
+cces_clean <- cces_data %>%
+  filter(year %in% c(2010:2025)) %>% # for years from 2010-2025
+  select(year, state, pid7, weight_cumulative, ideo5) %>%
+  # pid 7 = party affiliation (democrat <-> republican)
+  # ideo5 = ideological (liberal <-> conservative)
+  mutate(
+    # Set 8 and 9 to NA, swap 5 and 6
+    pid7 = case_when(
+      pid7 %in% c(8, 9) ~ NA_real_, # 8 = don't know, 9 = NA
+      pid7 == 2 ~ 3, # for some reason, 2 means weakly democrat and 3
+      # means democrat. if we want pid7 to be increasingly republican, 
+      # the order has to be: strong dem, dem, weak dem, neutral, weak rep
+      # rep, strong rep, but the current numbers are in the order:
+      # strong dem, weak dem, dem, neutral, rep, weak rep, strong rep, so
+      # we flip the numbers
+      pid7 == 3 ~ 2,
+      pid7 == 5 ~ 6,
+      pid7 == 6 ~ 5,
+      TRUE ~ as.numeric(pid7)
+    ),
+    ideo5 = case_when(
+      ideo5 == 6 ~ NA_real_,
+      TRUE ~ as.numeric(ideo5) # 6 = not sure
+    )
+  )
+         
+```
+
+```{r}
+
+# calculate year x state weighted means
+state_pid <- cces_clean %>%
+  group_by(state, year) %>%
+  summarise(
+    net_rep   = weighted.mean(pid7 >= 5, weight_cumulative, na.rm = TRUE) -
+                weighted.mean(pid7 <= 3, weight_cumulative, na.rm = TRUE),
+    mean_pid7 = weighted.mean(pid7, weight_cumulative, na.rm = TRUE),
+    mean_ideo5 = weighted.mean(ideo5, weight_cumulative, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+state_pid <- state_pid %>% # make abbreviations
+  mutate(state = fips_codes$state[match(state, as.integer(fips_codes$state_code))])
+
+# export to clean data
+write.csv(state_pid, "clean data/cces_clean.csv", row.names = FALSE)
+
+```
+

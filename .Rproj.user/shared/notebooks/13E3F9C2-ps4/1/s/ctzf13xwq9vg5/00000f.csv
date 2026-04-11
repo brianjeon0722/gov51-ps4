@@ -1,0 +1,6 @@
+"0",""
+"0","card %>%"
+"0","  group_by(nearc4) %>%"
+"0","  summarize(mean_black = mean(black),"
+"0","            mean_smsa = mean(smsa),"
+"0","            mean_south = mean(south))"

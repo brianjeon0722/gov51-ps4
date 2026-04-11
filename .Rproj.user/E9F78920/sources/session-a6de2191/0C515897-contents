@@ -1,0 +1,849 @@
+---
+output:
+  pdf_document: default
+header-includes:
+  - \usepackage{changepage}
+  - \usepackage{lmodern}
+  - \usepackage{anyfontsize}
+  - \fontsize{20pt}{20pt}\selectfont
+---
+
+# Intro
+
+Analysis on the last page. First few pages dedicated to creating US panel dataset. See other file for all other data cleaning.
+
+\newpage
+
+# Creating US Panel Dataset
+
+```{r}
+
+# rm(list=ls())
+
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(ggplot2)
+library(haven)
+library(infer)
+library(moderndive)
+library(estimatr)
+library(sandwich)
+library(lmtest)
+library(car)
+library(ivreg)
+library(plm)
+library(urca)
+library(purrr)
+library(oiplot)
+library(binsreg)
+library(rdrobust)
+library(causaldata)
+
+us_2010 <- read.csv("clean data/us_2010.csv")
+us_2011 <- read.csv("clean data/us_2011.csv")
+us_2012 <- read.csv("clean data/us_2012.csv")
+us_2013 <- read.csv("clean data/us_2013.csv")
+us_2014 <- read.csv("clean data/us_2014.csv")
+us_2015 <- read.csv("clean data/us_2015.csv")
+us_2016 <- read.csv("clean data/us_2016.csv")
+us_2017 <- read.csv("clean data/us_2017.csv")
+us_2018 <- read.csv("clean data/us_2018.csv")
+us_2019 <- read.csv("clean data/us_2019.csv")
+us_2020 <- read.csv("clean data/us_2020.csv")
+us_2021 <- read.csv("clean data/us_2021.csv")
+us_2022 <- read.csv("clean data/us_2022.csv")
+us_2023 <- read.csv("clean data/us_2023.csv")
+us_2024 <- read.csv("clean data/us_2024.csv")
+us_2025 <- read.csv("clean data/us_2025.csv")
+us_m_time_series <- read.csv("clean data/us_time_series.csv")
+annual <- read.csv("clean data/annual.csv")
+
+```
+
+```{r}
+
+us_y_time_series <- us_m_time_series %>%
+  group_by(year) %>%
+  summarize(total_relative_score = sum(relative_score)) %>%
+  select(year, total_relative_score)
+
+```
+
+```{r}
+
+# Put all datasets into a list and bind them
+us_all <- map_dfr(2010:2025, ~ get(paste0("us_", .x)))
+
+```
+
+```{r}
+
+us_combined <- us_all %>%
+  left_join(us_y_time_series, by = "year") %>%
+  mutate(weighted_score = total_relative_score * prop)
+
+```
+
+```{r}
+
+us_raw <- us_combined %>%
+  select(year, state, weighted_score) %>%
+  pivot_wider(
+    names_from = state,
+    values_from = weighted_score,
+    names_glue = "{state}_relative_score"
+  )
+
+```
+
+```{r}
+
+us_pc <- us_raw %>%
+  left_join(annual, by = "year")
+
+us_pc <- us_pc %>%
+  mutate(across(
+    ends_with("_relative_score"),
+    ~ .x / us_pc[[gsub("_relative_score", "", cur_column())]],
+    .names = "{.col}_pc"
+  ))
+
+us_pc <- us_pc %>%
+  select(year, ends_with("_relative_score_pc"))
+
+```
+
+```{r}
+
+us_panel <- us_pc %>%
+  pivot_longer(
+    cols = ends_with("_relative_score_pc"),
+    names_to = "state",
+    values_to = "conspiracy_index_pc"
+  ) %>%
+  mutate(state = gsub("_relative_score_pc", "", state))
+
+state_lookup <- tibble(
+  state = c(state.abb, "DC"),
+  region = c(as.character(state.region), "South")
+)
+
+us_panel <- us_panel %>%
+  left_join(state_lookup, by = "state")
+
+```
+
+\newpage
+
+# Graphs + Regressions
+
+```{r}
+
+us_panel %>%
+  group_by(year, region) %>%
+  summarize(mean = mean(conspiracy_index_pc, na.rm = T)) %>%
+  ggplot(mapping = aes(x = year, y = mean, color = region)) +
+  geom_point() +
+  geom_line() +
+  labs(y = "Average Conspiracy Index",
+       x = "Year") +
+  theme_oi()
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "South") %>%
+  ggplot(mapping = aes(x = year, y = conspiracy_index_pc, color = state)) +
+  geom_point() +
+  geom_line() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Year")
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "North Central") %>%
+  ggplot(mapping = aes(x = year, y = conspiracy_index_pc, color = state)) +
+  geom_point() +
+  geom_line() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Year")
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "West") %>%
+  ggplot(mapping = aes(x = year, y = conspiracy_index_pc, color = state)) +
+  geom_point() +
+  geom_line() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Year")
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "Northeast") %>%
+  ggplot(mapping = aes(x = year, y = conspiracy_index_pc, color = state)) +
+  geom_point() +
+  geom_line() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Year")
+
+```
+
+## Gini Coefficient
+
+```{r}
+
+acs <- read.csv("clean data/acs.csv")
+
+us_panel <- us_panel %>%
+  left_join(acs, join_by("state", "year"))
+
+```
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  drop_na(estimate_gini, conspiracy_index_pc) %>%
+  mutate(x_bin = cut(estimate_gini, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(estimate_gini, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc, color = region)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+```
+
+```{r}
+
+us_panel <- us_panel %>%
+  mutate(log_y_pc = log(estimate_y_pc),
+         gini_sq = estimate_gini^2)
+
+```
+
+```{r}
+
+summary(lm(conspiracy_index_pc ~ estimate_gini + factor(state), data = us_panel))
+
+summary(lm(conspiracy_index_pc ~ estimate_gini + gini_sq + factor(state), data = us_panel))
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(year == 2010) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2))+
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2011) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2012) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2013) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2014) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2015) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2016) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(year == 2017) %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "Northeast") %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(region == "South") %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(region == "West") %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+us_panel %>%
+  filter(region == "North Central") %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(state == "NY") %>%
+  ggplot(mapping = aes(x = estimate_gini, y = conspiracy_index_pc)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  labs(y = "Average Conspiracy Index",
+       x = "Gini Coefficient") +
+  theme_oi()
+
+```
+
+## Income per Capita
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = log_y_pc, y = conspiracy_index_pc)) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "log Income per Capita")
+
+us_panel %>%
+  drop_na(conspiracy_index_pc, log_y_pc) %>%
+  mutate(x_bin = cut(log_y_pc, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(log_y_pc, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  labs(x = "y_pc", y = "Conspiracy Index") +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "log Income per Capita")
+
+```
+
+```{r}
+
+summary(lm(conspiracy_index_pc ~ log_y_pc, data = us_panel))
+
+```
+
+## Unemployment
+
+```{r}
+
+unemployment <- read.csv("clean data/unemployment.csv")
+
+```
+
+```{r}
+
+us_panel <- us_panel %>%
+  left_join(unemployment, join_by("state", "year"))
+
+```
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = unemployment, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Unemployment Rate (%)")
+
+us_panel %>%
+  drop_na(conspiracy_index_pc, unemployment) %>%
+  mutate(x_bin = cut(unemployment, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(unemployment, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(y = "Average Conspiracy Index",
+       x = "Unemployment Rate (%)") +
+  theme_oi()
+
+```
+
+```{r}
+
+summary(lm(conspiracy_index_pc ~ unemployment, data = us_panel))
+
+```
+
+## Share of Non-Citizens
+
+```{r}
+
+summary(lm(conspiracy_index_pc ~ share_not_citizen, data = us_panel))
+
+```
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = share_not_citizen, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)")
+
+us_panel %>%
+  drop_na(conspiracy_index_pc, share_not_citizen) %>%
+  mutate(x_bin = cut(share_not_citizen, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(share_not_citizen, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)") +
+  theme_oi()
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(region == "Northeast") %>%
+  ggplot(mapping = aes(x = share_not_citizen, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)")
+
+us_panel %>%
+  filter(region == "South") %>%
+  ggplot(mapping = aes(x = share_not_citizen, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)")
+
+us_panel %>%
+  filter(region == "West") %>%
+  ggplot(mapping = aes(x = share_not_citizen, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)")
+
+us_panel %>%
+  filter(region == "North Central") %>%
+  ggplot(mapping = aes(x = share_not_citizen, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Share of Non Citizens (%)")
+
+
+```
+
+## Pid7
+
+```{r}
+
+cces_clean <- read.csv("clean data/cces_clean.csv")
+
+```
+
+```{r}
+
+us_panel <- us_panel %>%
+  left_join(cces_clean, join_by("state", "year"))
+
+```
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = mean_pid7, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Political Affiliation (1 = Very Dem, 7 = Very Rep")
+
+us_panel %>%
+  drop_na(conspiracy_index_pc, mean_pid7) %>%
+  mutate(x_bin = cut(mean_pid7, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(mean_pid7, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  labs(x = "mean_pid7", y = "Conspiracy Index") +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Political Affiliation (1 = Very Dem, 7 = Very Rep")
+  
+
+```
+
+## Ideo5
+
+```{r}
+
+us_panel %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  drop_na(conspiracy_index_pc, mean_ideo5) %>%
+  mutate(x_bin = cut(mean_ideo5, breaks = 20)) %>%
+  group_by(x_bin) %>%
+  summarise(
+    y_mean = mean(conspiracy_index_pc, na.rm = TRUE),
+    x_mean = mean(mean_ideo5, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = x_mean, y = y_mean)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+```
+
+```{r}
+
+us_panel %>%
+  filter(year == 2010) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2011) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2012) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2013) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2014) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2015) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2016) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2019) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2021) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2022) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2023) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2024) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+us_panel %>%
+  filter(year == 2025) %>%
+  ggplot(mapping = aes(x = mean_ideo5, y = conspiracy_index_pc)) + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_point() +
+  theme_oi() +
+  labs(y = "Average Conspiracy Index",
+       x = "Ideological Affiliation (1 = Very Progressive, 
+       7 = Very Conservative")
+
+```
+
+```{r}
+
+us_panel <- us_panel %>%
+  mutate(mean_ideo5_sq = mean_ideo5^2)
+
+summary(lm(conspiracy_index_pc ~ mean_ideo5 + mean_ideo5_sq, data = us_panel))
+
+```
+
+```{r}
+
+us_panel <- us_panel %>%
+  mutate(mean_ideo5_sq = mean_ideo5^2)
+
+summary(lm(conspiracy_index_pc ~ mean_ideo5 + mean_ideo5_sq + estimate_gini + 
+             gini_sq + factor(state), data = us_panel))
+
+```
+
+## State Fixed Effects Alone
+
+```{r}
+
+summary(lm(conspiracy_index_pc ~ factor(state), data = us_panel))
+
+```
+
+\newpage
+
+## Analysis / Notes
+
+### Region / State Graphs
+
+For simplicity, I refer to the conspiracy index as CI.
+
+On average, West has greater CI than other regions but this difference has shunk over time. Large spike during COVID. CI is lowest it's ever been? Intuitively feels wrong but is empirically aligned with Uscinski 2022 who states that we are NOT in a conspiracy golden age, and in fact conspiracy engagement may be lower than ever.
+
+Lots of variation in CI across states even within regions. COVID's (+) shock on CI is also different for every state. Generally seems like if you historically had high CI, COVID increased CI more. 
+
+### Gini Coefficient
+
+Fascinating diagram. Binned scatterplot is even more fascinating. Parabolic shape is quite stable over regions, years, and even within states. There is a concern that certain regions are the one driving most of the parabolic shape (West on the left, South on the right). But, even adjusting for state fixed effects, parabolic functional form remains. Zero intuition why this relationship is true. 
+
+Within year parabolic function likely due to outlier on the right. Will likely adjust for year fixed effects as well, although there might be too little variation to exploit. Regardless, a negative relationship between CI and Gini coefficient is interesting in of itself since intuition says it should be positive. Perhaps some OVB here?
+
+### Income Per Capita
+
+Binned scatterplot may be misleading - right side is dragged up by few outlier points. Generally negative relationship in the full scatterplot and regression consistent with qualitative sociology literature about agency loss increasing conspiracy belief. 
+
+### Unemployment
+
+Positive relationship, although binned scattterplot is not convincing. Intuitively, this makes sense. 
+
+### Share of Non-Citizens
+
+Included this variable as a proxy for contact theory / being around others different than you? Maybe less conspiratorial the more contact you have with those different than you? Negative relationship seems especially strong but likely due to OVB. Relationship is stable within regions. There are better variables to measure diversity (racial share) so will likely instead turn to those. Negative relationship likely driven by political preferences as well. 
+
+### Pid7 Political Affiliation / ideo5 Ideological Affiliation
+
+Binned scatterplot is quite beautiful and parabolic for both. Horsehoe theory could explain this (more extreme you are, the more conspiracies might appeal to you?). I would like to see if this relationship holds with state fixed effects and other controls. This is worth exploring further. Parabolic relationship seems stable over years. 
+
+I thought maybe controlling for ideology would explain the gini coefficient graph, but including both and state fixed effects still leads to nonlinear functional forms for both variables. This is 100\% worth investigating more. 
+
+### State Fixed Effects Alone
+
+$R^2$ of 66\% implies time invariant state effects explain 66\% of the variation. What could this mean intuitively? Culture perhaps? Demographics? Unsure. Explaining this variation could be very interesting.
+
+### Next Steps
+
+Variables to explore:
+\begin{itemize}
+\item Demographic data
+\item Social capital and upward mobility (Opportunity Atlas data)
+\item Time fixed effects
+\item Other interesting CCES polling data
+\end{itemize}
+
+Graphs to make:
+\begin{itemize}
+\item $R^2$ or $r$ over time
+\item $\hat{\beta_1}$ over time
+\end{itemize}
+
+To be honest, this panel dataset is so rich that this could be a very, very long paper. Exciting stuff!
