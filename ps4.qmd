@@ -8,6 +8,9 @@ header-includes:
   - \usepackage{lmodern}
   - \usepackage{anyfontsize}
   - \fontsize{20pt}{20pt}\selectfont
+  - \usepackage{tabularray}
+  - \UseTblrLibrary{siunitx}
+  - \usepackage{siunitx}
 ---
 
 # 1 Setup and Data Exploration
